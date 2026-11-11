@@ -1,0 +1,40 @@
+# CAMECRACK — local control of a rooted LSC/Tuya (Anyka) camera.
+#   - go2rtc : video gateway RTSP -> browser (WebRTC / MSE / HLS), ffmpeg included.
+#   - web    : control page + PTZ relay to the camera (its web page /ptz, telnet 24 in SD mode).
+#
+# Copy .env.example to .env and set your camera IP before starting:
+#   docker compose up -d
+# Then open http://localhost:8787/
+
+name: camecrack
+
+services:
+  go2rtc:
+    image: alexxit/go2rtc:1.9.15
+    container_name: camecrack-go2rtc
+    restart: unless-stopped
+    environment:
+      - CAMERA_IP=${CAMERA_IP}
+      - HOST_IP=${HOST_IP:-127.0.0.1}   # PC LAN IP, announced for WebRTC (low latency)
+    volumes:
+      - ./go2rtc/go2rtc.yaml:/config/go2rtc.yaml:ro
+    ports:
+      - "1984:1984"          # API + web player (stream.html, frame.jpeg)
+      - "8554:8554"          # re-exposed RTSP (handy for Home Assistant)
+      - "8555:8555/tcp"      # WebRTC
+      - "8555:8555/udp"
+
+  web:
+    build: ./web
+    container_name: camecrack-web
+    restart: unless-stopped
+    environment:
+      - CAMERA_IP=${CAMERA_IP}
+      - TELNET_PORT=${TELNET_PORT:-24}
+      - CAM_WEB_PASSWORD=${CAM_WEB_PASSWORD:-}   # camera web page password (WEB_PASSWORD on the SD card)
+      - PTZCTL=${PTZCTL:-auto}       # auto = with or without SD
+      - PTZ_CONF=${PTZ_CONF:-auto}
+    ports:
+      - "8787:8787"          # control page
+    depends_on:
+      - go2rtc

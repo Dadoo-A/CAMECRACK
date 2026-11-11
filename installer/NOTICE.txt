@@ -1,0 +1,25 @@
+Third-party software
+====================
+
+SD root toolkit
+---------------
+The SD card method (hack.sh, custom/ scripts, ptzctl binary, configs,
+_ak39_factory.ini, ...) comes from the open-source project:
+
+    lsc-tuya-toolkit  -  https://github.com/tasarren/lsc-tuya-toolkit
+
+It is NOT included in this repository: prepare_sd.py downloads it from GitHub
+(pinned to the tested commit) and copies it to your SD card, then adds the
+CAMECRACK files from sd-overlay/ and makes two small edits (liberator start in
+entrypoint.sh; status LED and time overlay off in _ht_sw_settings.ini).
+Thanks to the toolkit authors. Refer to the original repository for its terms.
+
+ptzctl (no-sd/ptzctl.xz) is built from the toolkit's ptzlib sources with musl
+(see no-sd/ptz/build-ptzctl.sh).
+
+hostapd 2.8
+-----------
+no-sd/ap-bin.tar.xz contains hostapd 2.8 (BSD license, Jouni Malinen and
+contributors, https://w1.fi/hostapd/) built statically with musl libc (MIT
+license, https://musl.libc.org/) and libnl-tiny (LGPL-2.1, OpenWrt). Build
+recipe and patches: no-sd/ap/.

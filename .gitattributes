@@ -1,0 +1,21 @@
+# LF line endings for files read inside Linux containers.
+*.py    text eol=lf
+*.yaml  text eol=lf
+*.yml   text eol=lf
+*.sh    text eol=lf
+Dockerfile text eol=lf
+.env.example text eol=lf
+# Windows scripts: keep CRLF
+*.ps1   text eol=crlf
+*.bat   text eol=crlf
+
+# SD payload: read by the camera's Linux shell -> ALWAYS LF
+installer/sd-overlay/** text eol=lf
+# No-SD scripts: run by the camera's Linux shell -> ALWAYS LF
+installer/no-sd/** text eol=lf
+# ...except binaries (leave untouched)
+installer/no-sd/ap-bin.tar.xz binary
+installer/no-sd/*.mp3 binary
+# PowerShell (Windows) even inside no-sd: CRLF
+installer/no-sd/**/*.ps1 text eol=crlf
+installer/no-sd/ptzctl.xz binary

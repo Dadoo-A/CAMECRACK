@@ -1,0 +1,243 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>CAMECRACK — Local control</title>
+<style>
+  :root{
+    --bg:#0e1116; --panel:#171c24; --panel2:#1f2630; --line:#2a323d;
+    --txt:#e6edf3; --muted:#9aa7b4; --accent:#3b82f6; --accent2:#2563eb;
+    --ok:#22c55e; --warn:#f59e0b; --err:#ef4444;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--txt);font-family:system-ui,Segoe UI,Roboto,Arial,sans-serif}
+  header{display:flex;align-items:center;gap:10px;padding:12px 16px;border-bottom:1px solid var(--line);background:var(--panel)}
+  header .dot{width:10px;height:10px;border-radius:50%;background:var(--muted)}
+  header .dot.on{background:var(--ok);box-shadow:0 0 8px var(--ok)}
+  header h1{font-size:16px;margin:0;font-weight:600}
+  header .ip{color:var(--muted);font-size:13px;margin-left:auto;font-variant-numeric:tabular-nums}
+  .wrap{max-width:1100px;margin:0 auto;padding:16px;display:grid;grid-template-columns:1fr 300px;gap:16px}
+  @media(max-width:860px){.wrap{grid-template-columns:1fr}}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;overflow:hidden}
+  .card.full{grid-column:1/-1}
+  .video{aspect-ratio:16/9;background:#000;width:100%;border:0;display:block}
+  .vhead{display:flex;align-items:center;gap:8px;padding:8px 12px;border-bottom:1px solid var(--line);color:var(--muted);font-size:13px}
+  .vhead select{margin-left:auto;background:var(--panel2);color:var(--txt);border:1px solid var(--line);border-radius:6px;padding:3px 6px;font-size:12px}
+  .pad{padding:16px}
+  h2{font-size:13px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);margin:0 0 12px}
+  .dpad{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;max-width:240px;margin:0 auto}
+  .dpad button{aspect-ratio:1;border:1px solid var(--line);background:var(--panel2);color:var(--txt);
+    border-radius:10px;font-size:22px;cursor:pointer;user-select:none;touch-action:none;transition:.08s}
+  .dpad button:active,.dpad button.act{background:var(--accent);border-color:var(--accent)}
+  .dpad .empty{visibility:hidden}
+  .dpad .stop{font-size:13px}
+  .row{display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin-top:16px}
+  .row label{font-size:13px;color:var(--muted);min-width:56px}
+  input[type=range]{flex:1;accent-color:var(--accent)}
+  .val{min-width:34px;text-align:right;font-variant-numeric:tabular-nums}
+  .btns{display:flex;gap:8px;margin-top:16px;flex-wrap:wrap}
+  .btns button{flex:1;min-width:90px;padding:10px;border-radius:10px;border:1px solid var(--line);
+    background:var(--panel2);color:var(--txt);cursor:pointer;font-size:14px}
+  .btns button:hover{border-color:var(--accent)}
+  .btns .primary{background:var(--accent2);border-color:var(--accent2)}
+  .status{margin-top:14px;font-size:12px;color:var(--muted);min-height:18px}
+  .status.err{color:var(--err)} .status.ok{color:var(--ok)}
+  .hint{margin-top:10px;font-size:12px;color:var(--muted);line-height:1.5}
+  a{color:var(--accent)}
+</style>
+</head>
+<body>
+<header>
+  <span class="dot" id="dot"></span>
+  <h1>CAMECRACK · local control</h1>
+  <span class="ip" id="hostlabel"></span>
+</header>
+
+<div class="wrap">
+  <div class="card">
+    <div class="vhead">
+      <span class="dot on"></span> Video stream · via go2rtc
+      <select id="src" title="Stream source">
+        <option value="camecrack">H265 (auto: WebRTC if possible, else MSE)</option>
+        <option value="camecrack|webrtc">H265 WebRTC forced (Chrome — not Edge)</option>
+        <option value="camecrack_h264">H264 (transcoded — if the picture is black)</option>
+      </select>
+    </div>
+    <iframe class="video" id="player" allow="autoplay; fullscreen"></iframe>
+  </div>
+
+  <div class="card pad">
+    <h2>PTZ control</h2>
+    <div class="dpad">
+      <div class="empty"></div>
+      <button data-dir="up">▲</button>
+      <div class="empty"></div>
+      <button data-dir="left">◀</button>
+      <button class="stop" data-dir="stop">STOP</button>
+      <button data-dir="right">▶</button>
+      <div class="empty"></div>
+      <button data-dir="down">▼</button>
+      <div class="empty"></div>
+    </div>
+
+    <div class="row">
+      <label>Speed</label>
+      <input type="range" id="speed" min="0.2" max="1" step="0.05" value="0.6" />
+      <span class="val" id="speedv">0.60</span>
+    </div>
+
+    <div class="btns">
+      <button id="home" class="primary">⌂ Home</button>
+      <button id="snap">📷 Photo</button>
+      <button id="full">⛶ Fullscreen</button>
+    </div>
+
+    <div class="status" id="status">Ready.</div>
+    <div class="hint">Hold an arrow to move, release to stop.
+      Automatic safety stop after 3 s.</div>
+  </div>
+
+  <div class="card pad full">
+    <h2>Boot sounds</h2>
+    <div class="row">
+      <input type="file" id="sndfile" accept="audio/*,video/*" />
+    </div>
+    <div class="btns">
+      <button id="sndjingle">♪ Set as jingle (max 10 s)</button>
+      <button id="sndbip">• Set as beep (max 3 s)</button>
+    </div>
+    <div class="status" id="sndstatus">Any audio file: converted to the camera format, active at the next boot.</div>
+  </div>
+
+  <div class="card pad full">
+    <h2>Status LED</h2>
+    <div id="ledrows"></div>
+    <div class="status" id="ledstatus">Settings are stored on the camera (also usable from Home Assistant).</div>
+  </div>
+</div>
+
+<script>
+const $=s=>document.querySelector(s);
+const speed=$('#speed'), speedv=$('#speedv'), status=$('#status'), dot=$('#dot');
+const srcSel=$('#src'), player=$('#player');
+
+// go2rtc is published on the same host as this page, port 1984.
+const GO2RTC = location.protocol+'//'+location.hostname+':1984';
+$('#hostlabel').textContent = location.hostname;
+
+// Menu value = "stream" or "stream|mode" (forced go2rtc mode, e.g. webrtc).
+const streamName = () => srcSel.value.split('|')[0];
+function loadStream(){
+  const [src, mode] = srcSel.value.split('|');
+  player.src = GO2RTC+'/stream.html?src='+encodeURIComponent(src)+(mode?'&mode='+mode:'');
+}
+srcSel.onchange = loadStream;
+loadStream();
+
+speed.oninput=()=>speedv.textContent=(+speed.value).toFixed(2);
+
+let safety=null;
+function setStatus(msg,cls){ status.textContent=msg; status.className='status'+(cls?' '+cls:''); }
+
+async function ptz(dir){
+  try{
+    const u=`/ptz?dir=${encodeURIComponent(dir)}&speed=${encodeURIComponent(speed.value)}`;
+    const r=await fetch(u);
+    const j=await r.json();
+    dot.classList.toggle('on', !!j.ok);
+    if(!j.ok){ setStatus('PTZ command failed ('+dir+')','err'); }
+    else { setStatus(dir==='stop'?'Stopped.':'Moving: '+dir, 'ok'); }
+  }catch(e){ dot.classList.remove('on'); setStatus('Server unreachable','err'); }
+}
+
+function startMove(dir,btn){
+  btn&&btn.classList.add('act');
+  ptz(dir);
+  clearTimeout(safety);
+  safety=setTimeout(()=>{ stopMove(); }, 3000); // safety
+}
+function stopMove(){
+  clearTimeout(safety);
+  document.querySelectorAll('.dpad button').forEach(b=>b.classList.remove('act'));
+  ptz('stop');
+}
+
+document.querySelectorAll('.dpad button[data-dir]').forEach(btn=>{
+  const dir=btn.dataset.dir;
+  if(dir==='stop'){ btn.addEventListener('click',stopMove); return; }
+  btn.addEventListener('pointerdown',e=>{ e.preventDefault(); startMove(dir,btn); });
+  btn.addEventListener('pointerup',e=>{ e.preventDefault(); stopMove(); });
+  btn.addEventListener('pointerleave',e=>{ if(btn.classList.contains('act')) stopMove(); });
+  btn.addEventListener('pointercancel',stopMove);
+});
+window.addEventListener('pointerup',()=>{ if(document.querySelector('.dpad button.act')) stopMove(); });
+
+// Keyboard: arrows + space = stop
+const keymap={ArrowUp:'up',ArrowDown:'down',ArrowLeft:'left',ArrowRight:'right'};
+let keyHeld=null;
+window.addEventListener('keydown',e=>{
+  if(e.repeat) return;
+  if(keymap[e.key]){ e.preventDefault(); keyHeld=keymap[e.key]; startMove(keyHeld); }
+  else if(e.key===' '){ e.preventDefault(); stopMove(); }
+});
+window.addEventListener('keyup',e=>{ if(keymap[e.key]){ e.preventDefault(); keyHeld=null; stopMove(); } });
+
+$('#home').onclick=()=>{ setStatus('Returning home…'); ptz('home'); };
+$('#snap').onclick=()=>window.open(GO2RTC+'/api/frame.jpeg?src='+encodeURIComponent(streamName()),'_blank');
+$('#full').onclick=()=>{ const p=player; (p.requestFullscreen||p.webkitRequestFullscreen||(()=>{})).call(p); };
+
+// Boot sounds: the server converts the file (ffmpeg) and uploads it to the camera.
+async function sendSound(name){
+  const f=$('#sndfile').files[0], st=$('#sndstatus');
+  if(!f){ st.textContent='Pick an audio file first.'; st.className='status err'; return; }
+  st.textContent='Converting and sending '+f.name+'…'; st.className='status';
+  try{
+    const r=await fetch('/sound?name='+name,{method:'POST',body:f});
+    const j=await r.json();
+    st.textContent=j.message||(j.ok?'Done.':'Failed.'); st.className='status '+(j.ok?'ok':'err');
+  }catch(e){ st.textContent='Server unreachable'; st.className='status err'; }
+}
+// Status LED: one row per event, pattern = off | on | blink:<on_ms>:<off_ms>.
+const LED_EVENTS=[['normal','Normal (filming)'],['wifi_connecting','Connecting to Wi-Fi'],
+  ['hotspot_starting','Hotspot starting'],['hotspot_ready','Hotspot ready'],
+  ['install_ok','SD install OK (15 s)'],['install_failed','SD install failed (30 s)']];
+function ledPattern(ev){
+  const m=$('#lm_'+ev).value;
+  return m==='blink' ? 'blink:'+$('#lon_'+ev).value+':'+$('#loff_'+ev).value : m;
+}
+async function ledCall(q,msg){
+  const st=$('#ledstatus');
+  try{
+    const r=await fetch('/led'+(q?'?'+q:'')); const j=await r.json();
+    if(!j.ok){ st.textContent=j.error||'Failed.'; st.className='status err'; return null; }
+    if(msg){ st.textContent=msg; st.className='status ok'; }
+    return j.led;
+  }catch(e){ st.textContent='Server unreachable'; st.className='status err'; return null; }
+}
+async function ledLoad(){
+  const led=await ledCall('',null);
+  if(!led){ $('#ledstatus').textContent='Camera page not reachable (SD card inserted, or camera booting). Retrying every 5 s…';
+    $('#ledstatus').className='status err'; setTimeout(ledLoad,5000); return; }
+  $('#ledstatus').textContent='Settings are stored on the camera (also usable from Home Assistant).'; $('#ledstatus').className='status';
+  $('#ledrows').innerHTML=LED_EVENTS.map(([ev,label])=>{
+    const p=led[ev]||'off', b=p.startsWith('blink:')?p.split(':'):['','300','300'];
+    const mode=p.startsWith('blink:')?'blink':p;
+    return `<div class="row"><label style="min-width:11em">${label}</label>
+      <select id="lm_${ev}">${['off','on','blink'].map(o=>`<option${o===mode?' selected':''}>${o}</option>`).join('')}</select>
+      <input id="lon_${ev}" type="number" min="50" max="5000" step="50" value="${b[1]}" style="width:5em" title="on (ms)">
+      <input id="loff_${ev}" type="number" min="50" max="5000" step="50" value="${b[2]}" style="width:5em" title="off (ms)">
+      <button data-test="${ev}">Test</button><button data-save="${ev}">Save</button></div>`;
+  }).join('');
+  document.querySelectorAll('[data-test]').forEach(b=>b.onclick=()=>
+    ledCall('test=1&pattern='+encodeURIComponent(ledPattern(b.dataset.test)),'Showing it for 5 s…'));
+  document.querySelectorAll('[data-save]').forEach(b=>b.onclick=()=>
+    ledCall('event='+b.dataset.save+'&pattern='+encodeURIComponent(ledPattern(b.dataset.save)),'Saved on the camera.'));
+}
+ledLoad();
+
+$('#sndjingle').onclick=()=>sendSound('jingle');
+$('#sndbip').onclick=()=>sendSound('bip');
+</script>
+</body>
+</html>

@@ -1,0 +1,34 @@
+#  go2rtc — video gateway for the CAMECRACK camera
+#  The camera IP comes from the CAMERA_IP variable (.env file, through docker-compose).
+
+streams:
+  # Main stream as served by the camera: H265 (HEVC) + AAC audio.
+  # Works directly when the browser decodes HEVC.
+  camecrack:
+    - rtsp://${CAMERA_IP}:554/main_ch
+    # No Opus audio on purpose: a browser without H265 over WebRTC (e.g. Edge) then
+    # negotiated an "audio only" WebRTC session (black screen + the camera mic played back).
+    # Without Opus, WebRTC fails cleanly there and the player stays on MSE.
+
+  # Same stream re-encoded to H264 by ffmpeg (included in the go2rtc image).
+  # Use it if the picture is black with "camecrack": works in every browser.
+  camecrack_h264:
+    - ffmpeg:camecrack#video=h264#audio=aac
+
+api:
+  listen: ":1984"
+
+rtsp:
+  listen: ":8554"
+
+webrtc:
+  listen: ":8555"
+  # go2rtc runs in Docker: without these addresses it announces the container's internal IP
+  # (172.18.x), unreachable from Windows, and the browser falls back to MSE (+1 to 2 s).
+  # 127.0.0.1 = playback on this PC; HOST_IP = the PC's LAN IP (playback from a phone).
+  candidates:
+    - 127.0.0.1:8555
+    - ${HOST_IP}:8555
+
+log:
+  level: info

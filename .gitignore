@@ -1,0 +1,14 @@
+# Secrets / local config (camera IP, etc.)
+.env
+
+# Misc
+*.log
+*.tmp
+
+# go2rtc Windows binaries (local leftovers, downloadable)
+go2rtc.exe
+go2rtc_win64.zip
+
+# Python bytecode
+__pycache__/
+*.pyc
