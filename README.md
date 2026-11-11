@@ -2,6 +2,13 @@
 
 **Free an LSC / Tuya camera (Anyka AK39xx SoC): 100 % local, no cloud, no SD card.**
 
+> **Disclaimer.** CAMECRACK is an independent, community project. It is **not affiliated with,
+> endorsed by or supported by** LSC, Action or Tuya; their names are only used to say which
+> devices it works with. **No manufacturer firmware or code is included** in this repository.
+> Modifying your camera may void its warranty. Use at your own risk: the software is provided
+> "as is", without warranty of any kind (see [LICENSE](LICENSE)). A full backup of the camera's
+> flash is made on the SD card before anything is changed.
+
 An SD card prepared on your PC does all the work. It is **the liberator**: insert it, the
 camera switches to local mode, **backs up its flash to the card** and **installs the no-SD
 mode** into its own memory by itself. Remove the card, power-cycle: the camera stays free,
@@ -268,3 +275,8 @@ Different SoC families (Ingenic, e.g. Wyze-like cameras) are **not** supported.
 - Video gateway: [go2rtc](https://github.com/AlexxIT/go2rtc).
 - Hotspot: hostapd 2.8 built statically (musl, ARMv5), lead found thanks to
   [akost-firmware](https://github.com/michelostojski/akost-firmware).
+
+## License
+
+[MIT](LICENSE) for the CAMECRACK code and documentation. Third-party components keep their own
+terms: see [`installer/NOTICE.txt`](installer/NOTICE.txt).
