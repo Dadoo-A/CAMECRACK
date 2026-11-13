@@ -1,0 +1,18 @@
+# Home Assistant Container (for example as a Portainer stack on a Linux host / NAS).
+# Web UI: http://<host-ip>:8123
+#
+# - network_mode: host is what Home Assistant recommends (device discovery, no port mapping).
+#   It only works on a Linux Docker host (not Docker Desktop on Windows/macOS).
+# - Pin the version (update it when you want, e.g. with What's Up Docker).
+# - Change the /config path to a folder that is backed up on your host.
+services:
+  homeassistant:
+    image: ghcr.io/home-assistant/home-assistant:2026.11.1
+    container_name: homeassistant
+    restart: unless-stopped
+    network_mode: host
+    environment:
+      - TZ=Europe/Paris
+    volumes:
+      - /path/to/homeassistant/config:/config
+      - /etc/localtime:/etc/localtime:ro

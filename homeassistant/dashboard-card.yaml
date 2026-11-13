@@ -1,0 +1,60 @@
+# Dashboard card: camera view + PTZ arrows + LED.
+# In a dashboard of your own (the automatic "Overview" does not take custom cards):
+# Edit > Add card > Manual, paste this. Replace camera.camecrack with your camera
+# entity id (Settings > Entities, after adding the Generic Camera).
+type: vertical-stack
+cards:
+  - type: picture-entity
+    entity: camera.camecrack
+    camera_view: live
+    show_name: false
+    show_state: false
+  - type: grid
+    columns: 5
+    square: false
+    cards:
+      - type: button
+        icon: mdi:arrow-left-bold
+        tap_action:
+          action: perform-action
+          perform_action: script.camecrack_move
+          data: {direction: left, seconds: 1}
+      - type: button
+        icon: mdi:arrow-up-bold
+        tap_action:
+          action: perform-action
+          perform_action: script.camecrack_move
+          data: {direction: up, seconds: 1}
+      - type: button
+        icon: mdi:home
+        tap_action:
+          action: perform-action
+          perform_action: script.camecrack_home
+      - type: button
+        icon: mdi:arrow-down-bold
+        tap_action:
+          action: perform-action
+          perform_action: script.camecrack_move
+          data: {direction: down, seconds: 1}
+      - type: button
+        icon: mdi:arrow-right-bold
+        tap_action:
+          action: perform-action
+          perform_action: script.camecrack_move
+          data: {direction: right, seconds: 1}
+  - type: grid
+    columns: 2
+    square: false
+    cards:
+      - type: button
+        name: LED off
+        icon: mdi:led-off
+        tap_action:
+          action: perform-action
+          perform_action: script.camecrack_led_stealth
+      - type: button
+        name: LED on
+        icon: mdi:led-on
+        tap_action:
+          action: perform-action
+          perform_action: script.camecrack_led_on

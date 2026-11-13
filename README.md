@@ -162,12 +162,36 @@ boots in toolkit mode, with logs you can read on the PC.
 
 ## Home Assistant
 
-- **RTSP via go2rtc**: `rtsp://<PC-ip>:8554/camecrack` (or `camecrack_h264`), as a generic camera.
-- **Direct RTSP**: `rtsp://<camera-ip>:554/main_ch`.
+Ready-to-copy files are in [`homeassistant/`](homeassistant/):
+
+| File | What it is |
+|---|---|
+| [`docker-compose.yml`](homeassistant/docker-compose.yml) | Home Assistant Container (e.g. a Portainer stack on a Linux host / NAS) |
+| [`packages/camecrack.yaml`](homeassistant/packages/camecrack.yaml) | Package: `rest_command` for PTZ and LED, scripts `camecrack_move`, `camecrack_home`, LED on/off |
+| [`dashboard-card.yaml`](homeassistant/dashboard-card.yaml) | Dashboard card: live video, PTZ arrows, LED buttons |
+
+1. **Package**: in `configuration.yaml` add `homeassistant:` / `packages: !include_dir_named packages`,
+   copy `camecrack.yaml` to `<config>/packages/`, replace `<camera-ip>`, and put
+   `camecrack_password: "<WEB_PASSWORD>"` in `<config>/secrets.yaml`. Restart Home Assistant.
+2. **Video**: Settings > Devices & services > Add integration > **Generic Camera**, stream source
+   `rtsp://<camera-ip>:554/main_ch` (RTSP over TCP, no still image URL, no credentials). Set the
+   entity id to `camera.camecrack`.
+3. **Dashboard**: the default "Overview" of recent Home Assistant versions does not take custom
+   cards: create a new dashboard (Settings > Dashboards > Add dashboard > New dashboard from
+   scratch), then Add card > **Manual** and paste `dashboard-card.yaml`.
+
+Notes:
+- **Behind a reverse proxy** (Home Assistant 2026.x): the HTTP settings live in the UI, not in
+  `configuration.yaml` (an `http:` block is only imported at the very first start). Set them in
+  Settings > System > Network > HTTP server > **Reverse proxy** (use `X-Forwarded-For`, trusted
+  proxies = your proxy's IP), otherwise the proxy gets HTTP 400.
+- **Video latency**: the camera streams H265. Browsers rarely accept H265 over WebRTC, so Home
+  Assistant falls back to HLS (several seconds of delay). For near real time, give Home Assistant
+  an H264 stream, e.g. the `camecrack_h264` stream of the PC tool (`rtsp://<PC-ip>:8554/camecrack_h264`)
+  or a go2rtc instance on an always-on host that transcodes it.
 - **ONVIF** (PTZ): only with the SD card for now (port 8080).
-- **Camera HTTP API** (below): PTZ, status LED and sounds, e.g. with `rest_command`. Settings
-  (LED patterns, sounds, Wi-Fi) are stored **on the camera**, so they stay the same whether you
-  use the PC tool or Home Assistant.
+- Settings (LED patterns, sounds, Wi-Fi) are stored **on the camera**, so they stay the same
+  whether you use the PC tool or Home Assistant.
 
 ### Camera HTTP API (no-SD mode)
 
@@ -184,7 +208,7 @@ boots in toolkit mode, with logs you can read on the PC.
 
 LED events: `normal`, `wifi_connecting`, `hotspot_starting`, `hotspot_ready`, `install_ok`,
 `install_failed`. Patterns: `off`, `on`, `blink:<on_ms>:<off_ms>` (50 to 5000 ms).
-Home Assistant example:
+Home Assistant example (full version in `homeassistant/packages/camecrack.yaml`):
 
 ```yaml
 rest_command:
@@ -266,6 +290,7 @@ Different SoC families (Ingenic, e.g. Wyze-like cameras) are **not** supported.
 | `installer/sd-overlay/` | CAMECRACK files added on top of the SD toolkit (liberator, Wi-Fi fix) |
 | `installer/no-sd/` | No-SD mode copied to flash (scripts, hotspot, `ptzctl.xz`, sounds) and build recipes |
 | `web/`, `go2rtc/`, `docker-compose.yml` | PC tool (control page + video gateway) |
+| `homeassistant/` | Home Assistant examples (stack, package, dashboard card) |
 | `ROADMAP.md` | Done, to do, ideas |
 
 ## Credits

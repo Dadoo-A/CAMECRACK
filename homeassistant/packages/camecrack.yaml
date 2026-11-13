@@ -1,0 +1,82 @@
+# CAMECRACK camera for Home Assistant (package file).
+#
+# 1. In configuration.yaml, enable packages (once):
+#      homeassistant:
+#        packages: !include_dir_named packages
+# 2. Copy this file to <config>/packages/camecrack.yaml and replace <camera-ip>.
+# 3. In <config>/secrets.yaml add the camera web page password (WEB_PASSWORD on the SD card):
+#      camecrack_password: "your-password"
+# 4. Restart Home Assistant. Video: add the camera with Settings > Devices & services >
+#    Add integration > "Generic Camera" (see the README, Home Assistant section).
+#
+# Camera API used here (no-SD mode): /ptz and /led, HTTP Basic user "admin".
+
+rest_command:
+  camecrack_ptz:
+    url: "http://<camera-ip>/ptz?dir={{ dir }}&speed={{ speed | default(0.6) }}"
+    username: admin
+    password: !secret camecrack_password
+    timeout: 5
+  camecrack_led:
+    # event: normal, wifi_connecting, hotspot_starting, hotspot_ready, install_ok, install_failed
+    # pattern: off, on, blink:<on_ms>:<off_ms> (50 to 5000)
+    url: "http://<camera-ip>/led?event={{ event | default('normal') }}&pattern={{ pattern }}"
+    username: admin
+    password: !secret camecrack_password
+    timeout: 5
+
+script:
+  camecrack_move:
+    alias: "CAMECRACK: move"
+    description: Move the camera in one direction for a short time, then stop.
+    mode: restart
+    fields:
+      direction:
+        description: up, down, left or right
+        example: left
+        selector:
+          select:
+            options: [up, down, left, right]
+      seconds:
+        description: How long to move
+        default: 1
+        selector:
+          number: {min: 0.2, max: 10, step: 0.2, unit_of_measurement: s}
+      speed:
+        description: Motor speed (0.2 to 1)
+        default: 0.6
+        selector:
+          number: {min: 0.2, max: 1, step: 0.05}
+    sequence:
+      - action: rest_command.camecrack_ptz
+        data:
+          dir: "{{ direction }}"
+          speed: "{{ speed | default(0.6) }}"
+      - delay:
+          milliseconds: "{{ ((seconds | default(1)) | float * 1000) | int }}"
+      - action: rest_command.camecrack_ptz
+        data:
+          dir: stop
+
+  camecrack_home:
+    alias: "CAMECRACK: home position"
+    sequence:
+      - action: rest_command.camecrack_ptz
+        data:
+          dir: home
+
+  camecrack_led_stealth:
+    alias: "CAMECRACK: LED off"
+    sequence:
+      - action: rest_command.camecrack_led
+        data:
+          event: normal
+          pattern: "off"
+
+  camecrack_led_on:
+    alias: "CAMECRACK: LED on"
+    sequence:
+      - action: rest_command.camecrack_led
+        data:
+          event: normal
+          pattern: "on"
