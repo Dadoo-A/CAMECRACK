@@ -91,6 +91,7 @@ class Grabber(threading.Thread):
         super().__init__(daemon=True)
         self.url, self.frame, self.lock, self.alive, self.hw = url, None, threading.Lock(), True, hw
         self.count, self.t_last, self.max_gap = 0, 0.0, 0.0     # stats printed every 10 s
+        self.threads = 1
 
     def run(self):
         while self.alive:
@@ -106,15 +107,29 @@ class Grabber(threading.Thread):
                 if not hw:
                     cap.release()
             if not hw:
-                cap = cv2.VideoCapture(self.url, cv2.CAP_FFMPEG, [cv2.CAP_PROP_N_THREADS, 2])
+                # 1 thread = least latency (each extra frame thread queues one more frame);
+                # switched to 2 below if the decoder cannot keep up (15 img/s in daylight).
+                cap = cv2.VideoCapture(self.url, cv2.CAP_FFMPEG, [cv2.CAP_PROP_N_THREADS, self.threads])
             if not cap.isOpened():
                 print("stream: cannot open, retrying in 3 s ...")
                 time.sleep(3)
                 continue
-            print("stream: connected, decoding:", "hardware (D3D11)" if hw else "CPU, 2 threads")
-            fails = 0
+            print("stream: connected, decoding:",
+                  "hardware (D3D11)" if hw else f"CPU, {self.threads} thread(s)")
+            fails = reads = instant = 0
             while self.alive:
+                t_read = time.time()
                 ok, f = cap.read()
+                if ok and not hw and self.threads == 1:
+                    # a read that returns at once means frames were already waiting = falling behind
+                    reads += 1
+                    instant += (time.time() - t_read) < 0.012
+                    if reads >= 90:
+                        if instant > 60:
+                            print("stream: decoder falling behind, switching to 2 threads")
+                            self.threads = 2
+                            break
+                        reads = instant = 0
                 if not ok:
                     # the first reads can fail while the decoder starts: give it 3 s
                     fails += 1
@@ -170,6 +185,39 @@ class PTZ:
             except OSError as e:
                 print("ptz:", e)
                 return
+
+    def rel(self, pan_deg, tilt_deg, done=None):
+        """Relative move of both axes at once (camera /ptz?rel=, ptzctl -J), in the background.
+        pan > 0 = right, tilt > 0 = up. done(ok) gets False if the camera page is too old."""
+        if self.busy:
+            return
+        self.busy = True
+        q = urllib.parse.urlencode({"rel": f"{pan_deg / 180:.4f},{tilt_deg / 98:.4f}"})
+
+        def run():
+            ok = False
+            try:
+                for attempt in range(10):
+                    try:
+                        req = urllib.request.Request(self.base + q, headers=self.headers)
+                        with urllib.request.urlopen(req, timeout=3) as r:
+                            ok = b'"rel"' in r.read()
+                        break
+                    except (urllib.error.URLError, ConnectionResetError) as e:
+                        reason = getattr(e, "reason", e)
+                        if isinstance(reason, (ConnectionRefusedError, ConnectionResetError)) and attempt < 9:
+                            time.sleep(0.05)
+                            continue
+                        break
+                    except OSError:
+                        break
+                # let the motors finish before the next correction (~15 degrees per 100 ms)
+                time.sleep(0.05 + max(abs(pan_deg), abs(tilt_deg)) / 150)
+            finally:
+                self.busy = False
+                if done:
+                    done(ok)
+        threading.Thread(target=run, daemon=True).start()
 
     def nudge(self, d, seconds, speed):
         """Move for `seconds` then stop, in the background (one nudge at a time)."""
@@ -234,15 +282,21 @@ class Tracker(threading.Thread):
         self.last_seen = 0.0
 
     def run(self):
-        last_frame, last_nudge = None, 0.0
+        """Continuous tracking: every detection (8/s) sends a small relative pan+tilt correction
+        towards the target. Corrections sent during the last `latency` seconds are not visible in
+        the video yet, so they are subtracted from the measured error (no overshoot/oscillation).
+        Falls back to short left/right/up/down nudges with an older camera page."""
+        from collections import deque
+        a = self.a
+        last_frame, last_cmd, pending = None, 0.0, deque()
         while self.alive:
             frame = self.grab.latest()
             if not self.enabled or frame is None or frame is last_frame:
-                time.sleep(0.02)
+                time.sleep(0.01)
                 continue
             last_frame = frame
-            if time.time() - getattr(self, "_last_det", 0) < 0.2:   # 5 detections/s are enough
-                time.sleep(0.02)
+            if time.time() - getattr(self, "_last_det", 0) < 0.125:   # up to 8 detections/s
+                time.sleep(0.01)
                 continue
             self._last_det = time.time()
             kind, box, _ = self.det.detect(frame)
@@ -255,18 +309,38 @@ class Tracker(threading.Thread):
             # error from the centre, -1..1; for a person aim at the upper body
             ex = (x + bw / 2) / self.det.w * 2 - 1
             ey = ((y + (bh * 0.3 if kind == "person" else bh / 2)) / self.det.h) * 2 - 1
-            if self.a.invert_pan:
+            if a.invert_pan:
                 ex = -ex
-            if self.a.invert_tilt:
+            if a.invert_tilt:
                 ey = -ey
-            # nudge the axis with the biggest error, then let the video catch up
-            if now - last_nudge > 0.7 and not self.ptz.busy:
-                if abs(ex) > 0.15 and abs(ex) >= abs(ey):
-                    self.ptz.nudge("right" if ex > 0 else "left", 0.08 + 0.25 * abs(ex), self.a.speed)
-                    last_nudge = now
-                elif abs(ey) > 0.2:
-                    self.ptz.nudge("down" if ey > 0 else "up", 0.06 + 0.2 * abs(ey), self.a.speed)
-                    last_nudge = now
+            if self.rel_ok is False:                       # old camera page: nudges
+                if now - last_cmd > 0.7 and not self.ptz.busy:
+                    if abs(ex) > 0.15 and abs(ex) >= abs(ey):
+                        self.ptz.nudge("right" if ex > 0 else "left", 0.08 + 0.25 * abs(ex), a.speed)
+                        last_cmd = now
+                    elif abs(ey) > 0.2:
+                        self.ptz.nudge("down" if ey > 0 else "up", 0.06 + 0.2 * abs(ey), a.speed)
+                        last_cmd = now
+                continue
+            # degrees to turn (x > 0 = right, y > 0 = down), minus what is already on its way
+            while pending and now - pending[0][0] > a.latency:
+                pending.popleft()
+            cx = ex * a.hfov / 2 - sum(q[1] for q in pending)
+            cy = ey * a.hfov * 9 / 16 / 2 - sum(q[2] for q in pending)
+            mx = 0 if abs(cx) < a.deadzone else int(round(max(-15, min(15, a.gain * cx))))
+            my = 0 if abs(cy) < a.deadzone else int(round(max(-10, min(10, a.gain * cy))))
+            if (mx or my) and not self.ptz.busy and now - last_cmd > 0.1:
+                self.ptz.rel(mx, -my, done=self._rel_result)
+                pending.append((now, mx, my))
+                last_cmd = now
+
+    rel_ok = None
+
+    def _rel_result(self, ok):
+        if self.rel_ok is None:
+            self.rel_ok = ok
+            print("tracking:", "continuous (relative moves)" if ok else
+                  "step by step (update the camera with the SD card for continuous tracking)")
 
 
 def main():
@@ -283,6 +357,10 @@ def main():
     ap.add_argument("--speed", type=float, default=0.6, help="PTZ speed 0.2..1")
     ap.add_argument("--hw", action="store_true", help="hardware video decoding (lower latency, "
                     "but may garble this camera's picture)")
+    ap.add_argument("--hfov", type=float, default=85, help="camera horizontal field of view (deg)")
+    ap.add_argument("--gain", type=float, default=0.6, help="tracking correction gain 0.2..1")
+    ap.add_argument("--deadzone", type=float, default=3, help="degrees left uncorrected")
+    ap.add_argument("--latency", type=float, default=0.9, help="video latency to compensate (s)")
     ap.add_argument("--invert-pan", action="store_true")
     ap.add_argument("--invert-tilt", action="store_true")
     a = ap.parse_args()

@@ -108,7 +108,18 @@ elif [ "$path" = "/ptz" ]; then
   P=/tmp/ptzctl; C=$CC/ptz.conf
   [ -x "$P" ] || { P=/tmp/sd/custom/bin/ptzctl; C=/tmp/sd/custom/configs/ptz.conf; }
   ok=true
+  # rel=dx,dy : relative move of both axes at once (ptzctl -J), each in -1..1
+  # (pan: 1 = 180 degrees, tilt: 1 = 98 degrees). Used by the PC tracking (continuous).
+  rel=$(urldec "$(field rel)")
+  if [ -n "$rel" ]; then
+    case "$rel" in
+      *[!0-9.,-]*|*,*,*|,*|*,) dir="" ;;
+      *,*) dir=rel ;;
+      *) dir="" ;;
+    esac
+  fi
   case "$dir" in
+    rel) "$P" -c "$C" -J "$rel,0" >/dev/null 2>&1 & ;;
     up|down|left|right) "$P" -c "$C" -m "$dir" -s "$speed" >/dev/null 2>&1 & ;;
     stop) "$P" -c "$C" -m stop >/dev/null 2>&1 & ;;
     home) "$P" -c "$C" -h >/dev/null 2>&1 & ;;
