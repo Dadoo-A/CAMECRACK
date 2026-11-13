@@ -211,8 +211,8 @@ class PTZ:
                         break
                     except OSError:
                         break
-                # let the motors finish before the next correction (~15 degrees per 100 ms)
-                time.sleep(0.05 + max(abs(pan_deg), abs(tilt_deg)) / 150)
+                # let ptzctl finish before the next correction (measured: 0.3-0.5 s for ~9 degrees)
+                time.sleep(0.25 + max(abs(pan_deg), abs(tilt_deg)) / 30)
             finally:
                 self.busy = False
                 if done:
