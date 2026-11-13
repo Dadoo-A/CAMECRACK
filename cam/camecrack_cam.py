@@ -357,7 +357,7 @@ class Tracker(threading.Thread):
                 pending.popleft()
             cx = ex * a.hfov / 2
             cy = ey * a.hfov * 9 / 16 / 2 - sum(q[2] for q in pending)
-            if self.ptz.cont_ok is not False:
+            if a.track_mode == "cont" and self.ptz.cont_ok is not False:
                 # PAN = velocity control: turn continuously towards the target, speed proportional
                 # to the error, minus the turn that the video does not show yet (latency).
                 cx -= self.pan_dir * self.pan_speed * a.pan_rate * a.latency
@@ -414,6 +414,8 @@ def main():
     ap.add_argument("--latency", type=float, default=0.9, help="video latency to compensate (s)")
     ap.add_argument("--pan-rate", type=float, default=60, help="pan degrees/s at speed 1 (continuous)")
     ap.add_argument("--max-speed", type=float, default=0.6, help="max continuous pan speed 0.05..1")
+    ap.add_argument("--track-mode", choices=["rel", "cont"], default="rel",
+                    help="rel = small relative corrections (default); cont = continuous pan (experimental)")
     ap.add_argument("--invert-pan", action="store_true")
     ap.add_argument("--invert-tilt", action="store_true")
     a = ap.parse_args()
