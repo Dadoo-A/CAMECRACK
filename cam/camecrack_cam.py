@@ -27,7 +27,9 @@ import numpy as np    # noqa: E402
 
 HERE = Path(__file__).resolve().parent
 MODELS = HERE / "models"
-GO2RTC = Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / "CAMECRACK" / "go2rtc" / "go2rtc.exe"
+# %LOCALAPPDATA% may be missing depending on how the app is started: default to its usual place
+GO2RTC = (Path(os.environ.get("LOCALAPPDATA") or Path.home() / "AppData" / "Local")
+          / "CAMECRACK" / "go2rtc" / "go2rtc.exe")
 
 
 def port_open(host, port):

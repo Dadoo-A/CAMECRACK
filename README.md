@@ -120,6 +120,31 @@ Stop: `docker compose down`.
 
 ---
 
+## PC webcam (Discord, Teams…) with active tracking — Windows
+
+[`cam/`](cam/) turns the camera into a regular webcam named **"Unity Video Capture"** and can keep
+a target centred with the PTZ: **face**, otherwise a **person**, otherwise a **cat**. No Docker or
+OBS needed.
+
+1. Once per PC: double-click **`cam\Install-Cam.bat`** (Python 3.8+ required). It installs the
+   Python packages, downloads the detection models (YuNet, MobileNet-SSD), the virtual webcam
+   driver (Unity Capture) and go2rtc — pinned versions, SHA-256 checked — and registers the
+   driver (Windows asks for administrator rights once). Needs the Microsoft Visual C++
+   Redistributable x64 (the script tells you if it is missing).
+2. Double-click **`cam\Start-Cam.bat`**: a preview window opens (`t` tracking on/off, `h` home,
+   `q` quit), and the webcam shows up in Discord / Teams / the browser.
+
+It reads `CAMERA_IP` and `CAM_WEB_PASSWORD` from `CAMECRACK\.env`. Options: `--no-track`,
+`--invert-pan`, `--invert-tilt`, `--speed 0.6`, `--hw` (see `--help`). Every 10 s it prints the
+received frame rate and the longest freeze. Uninstall the driver: `python cam\setup_cam.py --uninstall`.
+
+Notes: the camera's own RTSP server numbers its packets oddly, so the app always reads the
+video through go2rtc (the Docker one if it runs, else its own `go2rtc.exe`). Decoding uses
+2 CPU threads (~0.7 s glass-to-glass; FFmpeg's default 12 threads added ~1 s). Hardware
+decoding (`--hw`) is lower latency but the Intel decoder garbles part of this camera's frames.
+
+---
+
 ## Changing Wi-Fi
 
 Three ways, from simplest to most robust. Step by step:
@@ -290,6 +315,7 @@ Different SoC families (Ingenic, e.g. Wyze-like cameras) are **not** supported.
 | `installer/sd-overlay/` | CAMECRACK files added on top of the SD toolkit (liberator, Wi-Fi fix) |
 | `installer/no-sd/` | No-SD mode copied to flash (scripts, hotspot, `ptzctl.xz`, sounds) and build recipes |
 | `web/`, `go2rtc/`, `docker-compose.yml` | PC tool (control page + video gateway) |
+| `cam/` | Windows webcam + active tracking app (`Install-Cam.bat`, `Start-Cam.bat`) |
 | `homeassistant/` | Home Assistant examples (stack, package, dashboard card) |
 | `ROADMAP.md` | Done, to do, ideas |
 

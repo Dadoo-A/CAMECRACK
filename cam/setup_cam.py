@@ -21,7 +21,7 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 MODELS = HERE / "models"
-DRIVER_DIR = Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / "CAMECRACK" / "UnityCapture"
+DRIVER_DIR = Path(os.environ.get("LOCALAPPDATA") or Path.home() / "AppData" / "Local") / "CAMECRACK" / "UnityCapture"
 
 UC = "https://raw.githubusercontent.com/schellingb/UnityCapture/3ed54c325e0ad71afcf4f246c07e5e17b3d7f2d2/Install/"
 ZOO = ("https://media.githubusercontent.com/media/opencv/opencv_zoo/48b10fa505aeb51fbd127fc60a5c660040e823b7/"
