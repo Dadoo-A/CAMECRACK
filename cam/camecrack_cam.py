@@ -45,21 +45,29 @@ def video_source(ip):
     if port_open("127.0.0.1", 8554):
         print("video: through the Docker go2rtc")
         return "rtsp://127.0.0.1:8554/camecrack", None
-    if not GO2RTC.exists():
-        print("video: go2rtc.exe missing (run Install-Cam.bat): direct, lower quality")
+    exe = next((c for c in (GO2RTC, HERE / "go2rtc.exe", HERE.parent / "go2rtc.exe") if c.is_file()), None)
+    if exe is None:
+        print("*** go2rtc.exe NOT FOUND (looked for", GO2RTC, ")")
+        print("*** Run Install-Cam.bat. Falling back to the camera's own stream: expect freezes.")
         return f"rtsp://{ip}:554/main_ch", None
-    cfg = GO2RTC.parent / "camecrack_cam.yaml"
+    cfg = Path(os.environ.get("TEMP", str(HERE))) / "camecrack_cam_go2rtc.yaml"
     cfg.write_text(f'api:\n  listen: "127.0.0.1:11984"\nrtsp:\n  listen: "127.0.0.1:18554"\n'
                    f'webrtc:\n  listen: ""\nlog:\n  level: error\n'
                    f'streams:\n  camecrack: rtsp://{ip}:554/main_ch\n', encoding="utf-8")
-    proc = subprocess.Popen([str(GO2RTC), "-config", str(cfg)], stdout=subprocess.DEVNULL,
+    proc = subprocess.Popen([str(exe), "-config", str(cfg)], stdout=subprocess.DEVNULL,
                             stderr=subprocess.DEVNULL, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
     for _ in range(50):
         if port_open("127.0.0.1", 18554):
             break
         time.sleep(0.1)
-    print("video: through a local go2rtc")
+    if proc.poll() is not None or not port_open("127.0.0.1", 18554):
+        print("*** go2rtc did not start (blocked by an antivirus / Smart App Control?):", exe)
+        print("*** Falling back to the camera's own stream: expect freezes.")
+        return f"rtsp://{ip}:554/main_ch", None
+    print("video: through a local go2rtc (", exe, ")")
     return "rtsp://127.0.0.1:18554/camecrack", proc
+
+
 SSD_CLASSES = {15: "person", 8: "cat"}      # MobileNet-SSD (VOC) class ids
 
 
