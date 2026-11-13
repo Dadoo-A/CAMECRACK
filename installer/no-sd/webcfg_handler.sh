@@ -95,7 +95,10 @@ elif [ "$path" = "/led" ]; then
 elif [ "$path" = "/log" ]; then
   # Read the no-SD boot log without the SD card or telnet (password-protected like the rest).
   printf 'HTTP/1.0 200 OK\r\nContent-Type: text/plain; charset=utf-8\r\nConnection: close\r\n\r\n'
-  echo "uptime: $(cut -d' ' -f1 /proc/uptime) s   date: $(date)"
+  echo "uptime: $(cut -d' ' -f1 /proc/uptime) s   date: $(date)   load: $(cut -d' ' -f1-3 /proc/loadavg)"
+  echo "video clients (RTSP :554):"; netstat -tn 2>/dev/null | grep ":554 " | awk '{print "  " $5 "  send-queue " $3}'
+  top -b -n1 2>/dev/null | sed -n '2p;5,8p'
+  echo "---- boot.log"
   tail -c 4096 "$CC/boot.log" 2>/dev/null
 elif [ "$path" = "/ptz" ]; then
   # PTZ for the PC tool, so it no longer needs a root shell (telnet). Only a fixed set
