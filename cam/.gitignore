@@ -1,0 +1,5 @@
+# downloaded by setup_cam.py
+models/
+vendor/
+camecrack_cam.log
+__pycache__/

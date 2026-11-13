@@ -5,7 +5,7 @@
    commit; it is not redistributed here) and copies its sd_card/ folder to the card.
 2. Adds the CAMECRACK files on top (sd-overlay/) and the no-SD mode (no-sd/ -> camecrack/),
    with two small edits of toolkit files (liberator start in entrypoint.sh; status LED and
-   time overlay off in _ht_sw_settings.ini).
+   time overlay and motion alarm off in _ht_sw_settings.ini).
 3. Writes your Wi-Fi settings and the camera web page password.
 Then: insert the card in the camera, power on -> local mode, no cloud, and the "liberator"
 installs the no-SD mode into the camera's flash by itself.
@@ -154,6 +154,11 @@ def patch_toolkit(root):
     # status LED driven by CAMECRACK only; time overlay off (it ignores the time zone)
     t = re.sub(r"(?m)^(bool_led_enable\s*=\s*)1", r"\g<1>0", t)
     t = re.sub(r"(?m)^(bool_osd_time\s*=\s*)1", r"\g<1>0", t)
+    # Tuya motion alarm off: it analyses every frame and saturates the camera CPU exactly
+    # when the picture moves (stream then drops data: grey, laggy video). Tracking is PC-side.
+    t = re.sub(r"(?m)^(bool_alarm_enable\s*=\s*)1", r"\g<1>0", t)
+    # continuous recording to the SD card off (CPU + card wear; record on the PC if needed)
+    t = re.sub(r"(?m)^(bool_sd_record_enable\s*=\s*)1", r"\g<1>0", t)
     sw.write_bytes(t.encode("utf-8"))
 
 
