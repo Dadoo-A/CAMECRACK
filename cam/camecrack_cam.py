@@ -239,7 +239,7 @@ class PTZ:
                     except OSError:
                         break
                 # let ptzctl finish before the next correction (measured: 0.3-0.5 s for ~9 degrees)
-                time.sleep(0.25 + max(abs(pan_deg), abs(tilt_deg)) / 30)
+                time.sleep(0.15 + max(abs(pan_deg), abs(tilt_deg)) / 60)
             finally:
                 self.busy = False
                 if done:
@@ -376,9 +376,9 @@ class Tracker(threading.Thread):
                 mx = 0
             else:
                 cx -= sum(q[1] for q in pending)
-                mx = 0 if abs(cx) < a.deadzone else int(round(max(-15, min(15, a.gain * cx))))
+                mx = 0 if abs(cx) < a.deadzone else int(round(max(-25, min(25, a.gain * cx))))
             # TILT (and PAN on an older camera page): small relative corrections
-            my = 0 if abs(cy) < a.deadzone * 1.5 else int(round(max(-10, min(10, a.gain * cy))))
+            my = 0 if abs(cy) < a.deadzone * 1.5 else int(round(max(-15, min(15, a.gain * cy))))
             if (mx or my) and not self.ptz.busy and now - last_cmd > 0.1:
                 self.ptz.rel(mx, -my, done=self._rel_result)
                 pending.append((now, mx, my))
@@ -409,7 +409,7 @@ def main():
     ap.add_argument("--hw", action="store_true", help="hardware video decoding (lower latency, "
                     "but may garble this camera's picture)")
     ap.add_argument("--hfov", type=float, default=85, help="camera horizontal field of view (deg)")
-    ap.add_argument("--gain", type=float, default=0.6, help="tracking correction gain 0.2..1")
+    ap.add_argument("--gain", type=float, default=0.9, help="tracking correction gain 0.2..1")
     ap.add_argument("--deadzone", type=float, default=3, help="degrees left uncorrected")
     ap.add_argument("--latency", type=float, default=0.9, help="video latency to compensate (s)")
     ap.add_argument("--pan-rate", type=float, default=60, help="pan degrees/s at speed 1 (continuous)")
