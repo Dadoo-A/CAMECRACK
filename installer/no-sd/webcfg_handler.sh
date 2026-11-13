@@ -118,7 +118,24 @@ elif [ "$path" = "/ptz" ]; then
       *) dir="" ;;
     esac
   fi
+  # cont=1 : continuous move (ptzctl CONTINUOUS_MODE: small motor steps every 80 ms) that
+  # replaces the previous one; it stops by itself after 2 s unless renewed (PC app crash safety).
+  PID=/tmp/cc_ptz_cont.pid
+  stop_cont(){ [ -f $PID ] && kill "$(cat $PID)" 2>/dev/null; rm -f $PID; }
+  if [ "$(field cont)" = "1" ]; then
+    case "$dir" in
+      up|down|left|right)
+        [ -f /tmp/cc_ptz_cont.conf ] || sed 's/^CONTINUOUS_MODE=.*/CONTINUOUS_MODE=1/' "$C" > /tmp/cc_ptz_cont.conf
+        stop_cont
+        "$P" -c /tmp/cc_ptz_cont.conf -m "$dir" -s "$speed" >/dev/null 2>&1 &
+        pid=$!; echo $pid > $PID
+        ( sleep 2; [ "$(cat $PID 2>/dev/null)" = "$pid" ] && { kill $pid; rm -f $PID; } ) >/dev/null 2>&1 &
+        dir="cont-$dir" ;;
+    esac
+  fi
+  [ "$dir" = "stop" ] && stop_cont
   case "$dir" in
+    cont-*) ;;
     rel) "$P" -c "$C" -J "$rel,0" >/dev/null 2>&1 & ;;
     up|down|left|right) "$P" -c "$C" -m "$dir" -s "$speed" >/dev/null 2>&1 & ;;
     stop) "$P" -c "$C" -m stop >/dev/null 2>&1 & ;;

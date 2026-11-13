@@ -186,6 +186,33 @@ class PTZ:
                 print("ptz:", e)
                 return
 
+    def cont(self, d, speed):
+        """Continuous move (camera /ptz?cont=1) or 'stop', in the background. The camera stops
+        by itself after 2 s unless the move is renewed. Returns at once."""
+        q = {"dir": d, "speed": f"{speed:.2f}"}
+        if d != "stop":
+            q["cont"] = "1"
+        url = self.base + urllib.parse.urlencode(q)
+
+        def run():
+            for attempt in range(10):
+                try:
+                    with urllib.request.urlopen(urllib.request.Request(url, headers=self.headers),
+                                                timeout=3) as r:
+                        self.cont_ok = b'"cont-' in r.read() if d != "stop" else self.cont_ok
+                    return
+                except (urllib.error.URLError, ConnectionResetError) as e:
+                    reason = getattr(e, "reason", e)
+                    if isinstance(reason, (ConnectionRefusedError, ConnectionResetError)) and attempt < 9:
+                        time.sleep(0.05)
+                        continue
+                    return
+                except OSError:
+                    return
+        threading.Thread(target=run, daemon=True).start()
+
+    cont_ok = None
+
     def rel(self, pan_deg, tilt_deg, done=None):
         """Relative move of both axes at once (camera /ptz?rel=, ptzctl -J), in the background.
         pan > 0 = right, tilt > 0 = up. done(ok) gets False if the camera page is too old."""
@@ -303,6 +330,9 @@ class Tracker(threading.Thread):
             self.kind, self.box = kind, box
             now = time.time()
             if not box:
+                if self.pan_dir and now - self.last_seen > 0.5:
+                    self.ptz.cont("stop", 0)
+                    self.pan_dir, self.pan_speed = 0, 0.0
                 continue
             self.last_seen = now
             x, y, bw, bh = box
@@ -322,19 +352,40 @@ class Tracker(threading.Thread):
                         self.ptz.nudge("down" if ey > 0 else "up", 0.06 + 0.2 * abs(ey), a.speed)
                         last_cmd = now
                 continue
-            # degrees to turn (x > 0 = right, y > 0 = down), minus what is already on its way
+            # degrees to turn (x > 0 = right, y > 0 = down)
             while pending and now - pending[0][0] > a.latency:
                 pending.popleft()
-            cx = ex * a.hfov / 2 - sum(q[1] for q in pending)
+            cx = ex * a.hfov / 2
             cy = ey * a.hfov * 9 / 16 / 2 - sum(q[2] for q in pending)
-            mx = 0 if abs(cx) < a.deadzone else int(round(max(-15, min(15, a.gain * cx))))
-            my = 0 if abs(cy) < a.deadzone else int(round(max(-10, min(10, a.gain * cy))))
+            if self.ptz.cont_ok is not False:
+                # PAN = velocity control: turn continuously towards the target, speed proportional
+                # to the error, minus the turn that the video does not show yet (latency).
+                cx -= self.pan_dir * self.pan_speed * a.pan_rate * a.latency
+                if abs(cx) < a.deadzone:
+                    want_dir, want_speed = 0, 0.0
+                else:
+                    want_dir = 1 if cx > 0 else -1
+                    want_speed = round(min(a.max_speed, max(0.05, abs(cx) * a.gain / 30)) * 20) / 20
+                if want_dir == 0 and self.pan_dir != 0:
+                    self.ptz.cont("stop", 0)
+                    self.pan_dir, self.pan_speed = 0, 0.0
+                elif want_dir and (want_dir != self.pan_dir or want_speed != self.pan_speed
+                                   or now - self.pan_t > 1.2):     # renew before the 2 s auto-stop
+                    self.ptz.cont("right" if want_dir > 0 else "left", want_speed)
+                    self.pan_dir, self.pan_speed, self.pan_t = want_dir, want_speed, now
+                mx = 0
+            else:
+                cx -= sum(q[1] for q in pending)
+                mx = 0 if abs(cx) < a.deadzone else int(round(max(-15, min(15, a.gain * cx))))
+            # TILT (and PAN on an older camera page): small relative corrections
+            my = 0 if abs(cy) < a.deadzone * 1.5 else int(round(max(-10, min(10, a.gain * cy))))
             if (mx or my) and not self.ptz.busy and now - last_cmd > 0.1:
                 self.ptz.rel(mx, -my, done=self._rel_result)
                 pending.append((now, mx, my))
                 last_cmd = now
 
     rel_ok = None
+    pan_dir, pan_speed, pan_t = 0, 0.0, 0.0
 
     def _rel_result(self, ok):
         if self.rel_ok is None:
@@ -361,6 +412,8 @@ def main():
     ap.add_argument("--gain", type=float, default=0.6, help="tracking correction gain 0.2..1")
     ap.add_argument("--deadzone", type=float, default=3, help="degrees left uncorrected")
     ap.add_argument("--latency", type=float, default=0.9, help="video latency to compensate (s)")
+    ap.add_argument("--pan-rate", type=float, default=60, help="pan degrees/s at speed 1 (continuous)")
+    ap.add_argument("--max-speed", type=float, default=0.6, help="max continuous pan speed 0.05..1")
     ap.add_argument("--invert-pan", action="store_true")
     ap.add_argument("--invert-tilt", action="store_true")
     a = ap.parse_args()
