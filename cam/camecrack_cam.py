@@ -80,6 +80,7 @@ class Grabber(threading.Thread):
     def __init__(self, url, hw=False):
         super().__init__(daemon=True)
         self.url, self.frame, self.lock, self.alive, self.hw = url, None, threading.Lock(), True, hw
+        self.count, self.t_last, self.max_gap = 0, 0.0, 0.0     # stats printed every 10 s
 
     def run(self):
         while self.alive:
@@ -113,6 +114,9 @@ class Grabber(threading.Thread):
                     time.sleep(0.1)
                     continue
                 fails = 0
+                now = time.time()
+                self.max_gap = max(self.max_gap, now - self.t_last) if self.t_last else 0.0
+                self.t_last, self.count = now, self.count + 1
                 with self.lock:
                     self.frame = f
             cap.release()
@@ -143,10 +147,15 @@ class PTZ:
                     r.read()
                 return
             except urllib.error.URLError as e:
-                if isinstance(e.reason, ConnectionRefusedError) and attempt < 9:
+                if isinstance(e.reason, (ConnectionRefusedError, ConnectionResetError)) and attempt < 9:
                     time.sleep(0.05)
                     continue
                 print("ptz:", e)
+                return
+            except ConnectionResetError:          # camera page closed the socket: busy, retry
+                if attempt < 9:
+                    time.sleep(0.05)
+                    continue
                 return
             except OSError as e:
                 print("ptz:", e)
@@ -222,6 +231,10 @@ class Tracker(threading.Thread):
                 time.sleep(0.02)
                 continue
             last_frame = frame
+            if time.time() - getattr(self, "_last_det", 0) < 0.2:   # 5 detections/s are enough
+                time.sleep(0.02)
+                continue
+            self._last_det = time.time()
             kind, box, _ = self.det.detect(frame)
             self.kind, self.box = kind, box
             now = time.time()
@@ -270,7 +283,7 @@ def main():
     src, g2r = (a.source, None) if a.source else video_source(a.ip)
     grab = Grabber(src, hw=a.hw)
     grab.start()
-    cv2.setNumThreads(4)          # leave CPU cores to the video decoder
+    cv2.setNumThreads(2)          # leave CPU cores to the video decoder (laptops!)
     det = Detector()
     ptz = PTZ(a.ip, a.password, a.speed)
     trk = Tracker(grab, det, ptz, a)
@@ -284,12 +297,17 @@ def main():
     print("tracking:", "on (face > person > cat)" if trk.enabled else "off")
 
     black = np.zeros((H, W, 3), np.uint8)
+    stats_t = time.time()
     try:
         while True:
             t0 = time.time()
             frame = grab.latest()
             out = black if frame is None else cv2.resize(frame, (W, H))
             kind, box = trk.kind, trk.box
+            if t0 - stats_t >= 10:
+                print(f"video: {grab.count / (t0 - stats_t):.1f} img/s received, "
+                      f"longest freeze {grab.max_gap * 1000:.0f} ms (last 10 s)")
+                grab.count, grab.max_gap, stats_t = 0, 0.0, t0
 
             if cam:
                 cam.send(cv2.cvtColor(out, cv2.COLOR_BGR2RGB))
