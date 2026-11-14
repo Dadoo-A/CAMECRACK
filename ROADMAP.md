@@ -76,6 +76,56 @@ Detect a face in the stream and **make the camera follow it** (closed-loop PTZ).
 - **On-device lead**: `anyka_ipc` links **`libaiot_person_detect.so`** (person detection on the
   camera) → tracking without a PC.
 - Ideas: several faces (follow the closest/central one), back to home after inactivity.
+- **Status (2026-11-13)**: the `cam/` app tracks with relative moves (`ptzctl -J`). Measured
+  without SD: one pan unit of `-J` is **~15°, not 180°** → corrections were ~10× too small
+  (now `--pan-unit 15`). Tilt not measured: after one downward move it stopped answering (up/down
+  and `-J`) until `home`. Likely cause: `ptz.conf` keeps `STATE_DIR`/`LOG_FILE` on the absent SD
+  card → fixed in `extras.sh` (RAM copy `/tmp/ptz.conf`), installed.
+  Retest after the fix (pixels at 1280 width): pan stays roughly linear (0.1→22, 0.2→45,
+  0.3→63, 0.4→112, i.e. ~15°/unit); **tilt up saturates** (0.1 and 0.3 both ≈ 22 px) and **tilt
+  down barely moves**. `-J` sends 64-step chunks every 30 ms (`ABSREL_CHUNK_STEPS`,
+  `ABSREL_INTERVAL_MS`) to an asynchronous motor driver. Next: with the SD card (shell), try
+  bigger chunks / longer interval for tilt, read `/tmp/ptz.log` (now also shown by `/log`).
+- **Bench with the SD card (2026-11-13 evening)**, `ptzctl -J` with overridden `ptz.conf`:
+  - one big chunk (4000 steps) = **no move at all**; 256/512-step chunks move less than 64:
+    the driver seems to drop or replace a move that arrives before the previous one ends;
+  - longer interval = full moves: tilt up 0.1→21 px, 0.3→58 px at 300 ms; pan 0.3→122 px
+    (63 with the default 30 ms) → the "15°/unit" pan figure was measured with truncated moves;
+  - **best so far: `ABSREL_CHUNK_STEPS=32`, `ABSREL_INTERVAL_MS=60`** → tilt up 0.2 ≈ 80 px,
+    repeatable, 1.3 s per command;
+  - **tilt reversal loses the first command** (backlash or driver): after going up, the first
+    down move (up to 0.3 unit) does nothing, the next ones move. `-m down/up` shows the same;
+- **Calibration (2026-11-14, clear view)** with 32 steps / 60 ms: pan ~800 px per `-J` unit at
+  1280 px width (0.1→73-92 px, 0.2→155 px), **no pan backlash**; tilt ~380 px per unit
+  (0.1→38 px), **tilt backlash ≈ 0.14 unit** (first reversal command lost, second partial).
+  Applied: `extras.sh` writes `ABSREL_CHUNK_STEPS=32` / `ABSREL_INTERVAL_MS=60` into
+  `/tmp/ptz.conf`; the `cam/` app uses `--pan-unit 53`, `--tilt-unit 25` (degrees at an 85° field
+  of view), adds `--tilt-backlash 0.14` on each tilt reversal and waits for the real move time.
+  **Tested live without the SD card (2026-11-14): tracking follows well.**
+- **Target choice** (2026-11-14): `--target me|cat|auto` and key `c` in the preview. `cat` looks
+  for a cat face (OpenCV Haar cascade), then a cat body aimed at its upper part.
+- **Video glitches** (2026-11-14): measured 44-48 decoder errors per 5 s with the camera still,
+  53 while panning → **not caused by PTZ**. Bursts drop the stream to 5-10 img/s every ~20 s.
+  Ping stayed < 100 ms throughout (Wi-Fi fine); the stalls matched the camera's TCP send queue
+  growing (up to 6 KB) with its CPU at 3 % idle. Direct read for 60 s: **TCP 0.4 img/s, UDP
+  14.9 img/s** with no second under 10 img/s. **Fix: go2rtc pulls the camera over UDP**
+  (`rtsp://…/main_ch#transport=udp`, in the `cam/` app): app at 15.2 img/s, freezes ~140 ms
+  (worst 334 ms, was 375-531 ms). Docker `go2rtc.yaml` left on TCP (incoming UDP into a Windows
+  container not tested).
+- **Arrow keys** in the `cam/` preview move the camera (`--arrow-step`, default 6°, tilt 60 %);
+  tracking pauses on a manual move (`t` resumes). Key `o` hides/shows the preview overlay
+  (the webcam output never has it). Cat target tested live: works.
+- **Discord** (2026-11-14): the Unity Capture webcam kept loading forever. Discord's log:
+  `Failed to bind to the selected capture device -2147024770` (0x8007007E, module not found):
+  its sandboxed capture process cannot load a DLL from the user profile. `setup_cam.py` now copies
+  the DLLs to `%ProgramFiles%\CAMECRACK\UnityCapture` and registers them there → works in Discord.
+  `--webcam-backend obs` is also available (OBS Virtual Camera, needs OBS Studio installed).
+- **Burnt-in clock removed** (2026-11-14): `anyka_ipc` reads `bool_osd_time` but never applies it
+  at startup (its logs never show "disable main channel osd"; only a Tuya cloud command does).
+  It draws the clock with the raw 8x16 font `/usr/local/ak_font_16.bin`: `boot.sh` now binds an
+  all-zero copy (RAM, same size) over it before `anyka_ipc` starts → no clock, no empty box.
+  Create `osd_clock_on` in the flash folder to keep the clock. The `cam/` app keeps a
+  `--hide-time` crop option for cameras without this fix.
 
 ### 6. Wi-Fi & reset (remaining ideas)
 - **"QR like LSC"**: the app generates a **standard Wi-Fi QR** scanned by **your phone** to join the hotspot.

@@ -100,12 +100,13 @@ elif [ "$path" = "/log" ]; then
   top -b -n1 2>/dev/null | sed -n '2p;5,8p'
   echo "---- boot.log"
   tail -c 4096 "$CC/boot.log" 2>/dev/null
+  [ -f /tmp/ptz.log ] && { echo "---- ptz.log"; tail -n 20 /tmp/ptz.log; }
 elif [ "$path" = "/ptz" ]; then
   # PTZ for the PC tool, so it no longer needs a root shell (telnet). Only a fixed set
   # of directions and a numeric speed are accepted; nothing else can be run from here.
   dir=$(field dir); speed=$(field speed)
   case "$speed" in [0-9]|[0-9].[0-9]|[0-9].[0-9][0-9]) ;; *) speed=0.6 ;; esac
-  P=/tmp/ptzctl; C=$CC/ptz.conf
+  P=/tmp/ptzctl; C=$CC/ptz.conf; [ -f /tmp/ptz.conf ] && C=/tmp/ptz.conf
   [ -x "$P" ] || { P=/tmp/sd/custom/bin/ptzctl; C=/tmp/sd/custom/configs/ptz.conf; }
   ok=true
   # rel=dx,dy : relative move of both axes at once (ptzctl -J), each in -1..1

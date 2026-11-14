@@ -31,6 +31,15 @@ echo "==== boot.sh no-SD mode $(date) ====" >> "$LOG"
 [ -f "$CC/_ht_hw_settings.ini" ] && mount --bind "$CC/_ht_hw_settings.ini" /usr/local/_ht_hw_settings.ini 2>/dev/null && echo "hw settings bound" >> "$LOG"
 [ -f "$CC/_ht_sw_settings.ini" ] && mount --bind "$CC/_ht_sw_settings.ini" /etc/config/_ht_sw_settings.ini 2>/dev/null && echo "sw settings bound" >> "$LOG"
 
+# Clock overlay: anyka_ipc draws it whatever bool_osd_time says (only a Tuya cloud command
+# turns it off). It draws with this raw 8x16 bitmap font: an all-zero copy in RAM, same size,
+# makes every character blank. Create $CC/osd_clock_on to keep the clock.
+F=/usr/local/ak_font_16.bin
+if [ ! -f "$CC/osd_clock_on" ] && [ -f "$F" ]; then
+  dd if=/dev/zero of=/tmp/blank_font.bin bs="$(wc -c < "$F")" count=1 2>/dev/null &&
+    mount --bind /tmp/blank_font.bin "$F" 2>/dev/null && echo "clock overlay hidden (blank font)" >> "$LOG"
+fi
+
 # Custom boot jingle: bind our mp3 (8 kHz mono) over the factory-mode voice prompt
 # that anyka_ipc plays at startup, so the camera says our line instead of the Chinese one.
 [ -f "$CC/jingle.mp3" ] && mount --bind "$CC/jingle.mp3" /usr/share/8k16_cn_factory_enter_factory_mode.mp3 2>/dev/null && echo "jingle bound" >> "$LOG"

@@ -55,7 +55,9 @@ def video_source(ip):
     cfg = Path(os.environ.get("TEMP", str(HERE))) / "camecrack_cam_go2rtc.yaml"
     cfg.write_text(f'api:\n  listen: "127.0.0.1:11984"\nrtsp:\n  listen: "127.0.0.1:18554"\n'
                    f'webrtc:\n  listen: ""\nlog:\n  level: error\n'
-                   f'streams:\n  camecrack: rtsp://{ip}:554/main_ch\n', encoding="utf-8")
+                   # UDP from the camera: over TCP its RTSP server stalls when its send queue
+                   # fills (whole seconds at 0 img/s, measured); over UDP the worst second is 8 img/s.
+                   f'streams:\n  camecrack: rtsp://{ip}:554/main_ch#transport=udp\n', encoding="utf-8")
     proc = subprocess.Popen([str(exe), "-config", str(cfg)], stdout=subprocess.DEVNULL,
                             stderr=subprocess.DEVNULL, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
     for _ in range(50):
@@ -154,8 +156,12 @@ class Grabber(threading.Thread):
 class PTZ:
     """Pan/tilt through the camera web page (/ptz), one short 'nudge' at a time."""
 
-    def __init__(self, ip, password, speed):
+    def __init__(self, ip, password, speed, pan_unit=53.0, tilt_unit=25.0, tilt_backlash=0.14):
         self.base, self.speed = f"http://{ip}/ptz?", speed
+        # Degrees moved by one ptzctl -J unit, measured on the camera (pan ~800 px, tilt ~380 px
+        # per unit at 1280 px width, i.e. 53 and 25 degrees with an 85 degree field of view).
+        self.pan_unit, self.tilt_unit, self.tilt_backlash = pan_unit, tilt_unit, tilt_backlash
+        self.tilt_sign = 0
         self.headers = {}
         if password:
             tok = base64.b64encode(f"admin:{password}".encode()).decode()
@@ -219,7 +225,18 @@ class PTZ:
         if self.busy:
             return
         self.busy = True
-        q = urllib.parse.urlencode({"rel": f"{pan_deg / 180:.4f},{tilt_deg / 98:.4f}"})
+        pu, tu = pan_deg / self.pan_unit, tilt_deg / self.tilt_unit
+        # Tilt gears have play: the first command after a direction change is mostly lost
+        # (measured ~0.14 unit), so add it on every reversal.
+        if tu:
+            sign = 1 if tu > 0 else -1
+            if self.tilt_sign and sign != self.tilt_sign:
+                tu += sign * self.tilt_backlash
+            self.tilt_sign = sign
+        q = urllib.parse.urlencode({"rel": f"{pu:.4f},{tu:.4f}"})
+        # ptzctl -J moves 32 steps every 60 ms, pan then tilt (camera ptz.conf set by extras.sh):
+        # ~3.8 s per pan unit, ~2.1 s per tilt unit.
+        move_s = 0.15 + 3.8 * abs(pu) + 2.1 * abs(tu)
 
         def run():
             ok = False
@@ -238,8 +255,8 @@ class PTZ:
                         break
                     except OSError:
                         break
-                # let ptzctl finish before the next correction (measured: 0.3-0.5 s for ~9 degrees)
-                time.sleep(0.15 + max(abs(pan_deg), abs(tilt_deg)) / 60)
+                # let ptzctl finish before the next correction
+                time.sleep(move_s)
             finally:
                 self.busy = False
                 if done:
@@ -263,7 +280,11 @@ class PTZ:
 
 
 class Detector:
-    """Face first (YuNet), then person, then cat (MobileNet-SSD), on a small copy of the frame."""
+    """On a small copy of the frame. Targets: "me" = human face (YuNet) then person;
+    "cat" = cat face (OpenCV Haar cascade) then cat body (MobileNet-SSD);
+    "auto" = human face, then person, then cat."""
+
+    TARGETS = ("auto", "me", "cat")
 
     def __init__(self, w=640, h=360):
         self.w, self.h = w, h
@@ -271,14 +292,21 @@ class Detector:
                                               "", (w, h), 0.75, 0.3, 50)
         self.ssd = cv2.dnn.readNetFromCaffe(str(MODELS / "deploy.prototxt"),
                                             str(MODELS / "mobilenet_iter_73000.caffemodel"))
+        self.catface = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_frontalcatface_extended.xml")
 
-    def detect(self, frame):
-        """Return (kind, (x, y, w, h)) in small-frame pixels, or None."""
+    def detect(self, frame, target="auto"):
+        """Return (kind, (x, y, w, h), small) in small-frame pixels; kind/box None if nothing."""
         small = cv2.resize(frame, (self.w, self.h))
-        _, faces = self.face.detect(small)
-        if faces is not None and len(faces):
-            f = max(faces, key=lambda r: r[2] * r[3])
-            return "face", tuple(int(v) for v in f[:4]), small
+        if target == "cat":
+            gray = cv2.equalizeHist(cv2.cvtColor(small, cv2.COLOR_BGR2GRAY))
+            cats = self.catface.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=4, minSize=(30, 30))
+            if len(cats):
+                return "cat face", tuple(int(v) for v in max(cats, key=lambda r: r[2] * r[3])), small
+        else:
+            _, faces = self.face.detect(small)
+            if faces is not None and len(faces):
+                f = max(faces, key=lambda r: r[2] * r[3])
+                return "face", tuple(int(v) for v in f[:4]), small
         blob = cv2.dnn.blobFromImage(cv2.resize(small, (300, 300)), 0.007843, (300, 300), 127.5)
         self.ssd.setInput(blob)
         out = self.ssd.forward()[0, 0]
@@ -291,7 +319,7 @@ class Detector:
                 name = SSD_CLASSES[cls]
                 if area > best.get(name, (0,))[0]:
                     best[name] = (area, (x1, y1, x2 - x1, y2 - y1))
-        for name in ("person", "cat"):
+        for name in {"me": ("person",), "cat": ("cat",)}.get(target, ("person", "cat")):
             if name in best:
                 return name, best[name][1], small
         return None, None, small
@@ -304,6 +332,7 @@ class Tracker(threading.Thread):
         super().__init__(daemon=True)
         self.grab, self.det, self.ptz, self.a = grab, det, ptz, args
         self.enabled = not args.no_track
+        self.target = args.target
         self.alive = True
         self.kind = self.box = None
         self.last_seen = 0.0
@@ -326,7 +355,7 @@ class Tracker(threading.Thread):
                 time.sleep(0.01)
                 continue
             self._last_det = time.time()
-            kind, box, _ = self.det.detect(frame)
+            kind, box, _ = self.det.detect(frame, self.target)
             self.kind, self.box = kind, box
             now = time.time()
             if not box:
@@ -336,9 +365,9 @@ class Tracker(threading.Thread):
                 continue
             self.last_seen = now
             x, y, bw, bh = box
-            # error from the centre, -1..1; for a person aim at the upper body
+            # error from the centre, -1..1; for a whole body (person, cat) aim at the head
             ex = (x + bw / 2) / self.det.w * 2 - 1
-            ey = ((y + (bh * 0.3 if kind == "person" else bh / 2)) / self.det.h) * 2 - 1
+            ey = ((y + (bh * 0.3 if kind in ("person", "cat") else bh / 2)) / self.det.h) * 2 - 1
             if a.invert_pan:
                 ex = -ex
             if a.invert_tilt:
@@ -403,6 +432,16 @@ def main():
     ap.add_argument("--size", default="1280x720", help="webcam size (default 1280x720)")
     ap.add_argument("--fps", type=int, default=15)
     ap.add_argument("--no-track", action="store_true", help="webcam only, no tracking")
+    ap.add_argument("--hide-time", action="store_true",
+                    help="6.5 %% zoom that cuts off the camera's clock, for a camera installed before "
+                         "the blank-font fix in boot.sh")
+    ap.add_argument("--webcam-backend", choices=["auto", "obs", "unitycapture"], default="auto",
+                    help="virtual webcam: OBS Virtual Camera (needed for Discord) or Unity Capture")
+    ap.add_argument("--arrow-step", type=float, default=6,
+                    help="degrees per arrow key press in the preview (tilt: 60 %%)")
+    ap.add_argument("--target", choices=Detector.TARGETS, default="auto",
+                    help="who to follow: me (human face/person), cat (cat face/cat), auto "
+                         "(face > person > cat); key 'c' in the preview switches")
     ap.add_argument("--no-webcam", action="store_true", help="tracking only (no virtual webcam)")
     ap.add_argument("--preview", action="store_true", help="show a preview window with boxes")
     ap.add_argument("--speed", type=float, default=0.6, help="PTZ speed 0.2..1")
@@ -416,6 +455,12 @@ def main():
     ap.add_argument("--max-speed", type=float, default=0.6, help="max continuous pan speed 0.05..1")
     ap.add_argument("--track-mode", choices=["rel", "cont"], default="rel",
                     help="rel = small relative corrections (default); cont = continuous pan (experimental)")
+    ap.add_argument("--pan-unit", type=float, default=53,
+                    help="pan degrees per ptzctl -J unit (rel mode, measured, scales with --hfov)")
+    ap.add_argument("--tilt-unit", type=float, default=25,
+                    help="tilt degrees per ptzctl -J unit (rel mode, measured, scales with --hfov)")
+    ap.add_argument("--tilt-backlash", type=float, default=0.14,
+                    help="extra tilt units added on a direction change (gear play, measured)")
     ap.add_argument("--invert-pan", action="store_true")
     ap.add_argument("--invert-tilt", action="store_true")
     a = ap.parse_args()
@@ -428,24 +473,46 @@ def main():
     grab.start()
     cv2.setNumThreads(2)          # leave CPU cores to the video decoder (laptops!)
     det = Detector()
-    ptz = PTZ(a.ip, a.password, a.speed)
+    ptz = PTZ(a.ip, a.password, a.speed, a.pan_unit * a.hfov / 85, a.tilt_unit * a.hfov / 85,
+              a.tilt_backlash)
     trk = Tracker(grab, det, ptz, a)
     trk.start()
 
     cam = None
     if not a.no_webcam:
         import pyvirtualcam
-        cam = pyvirtualcam.Camera(width=W, height=H, fps=a.fps, backend="unitycapture")
+        # OBS Virtual Camera (YUV, accepted by Discord) when OBS Studio is installed, else Unity
+        # Capture (RGB only: fine in browsers / Teams, but Discord keeps loading forever).
+        for backend in (["obs", "unitycapture"] if a.webcam_backend == "auto" else [a.webcam_backend]):
+            try:
+                cam = pyvirtualcam.Camera(width=W, height=H, fps=a.fps, backend=backend)
+                break
+            except RuntimeError as e:
+                print(f"webcam backend {backend}: {e}")
+        if cam is None:
+            raise SystemExit("No virtual webcam available: run Install-Cam.bat")
         print(f"webcam: '{cam.device}' {W}x{H}@{a.fps} - pick it in Discord / Teams / the browser")
-    print("tracking:", "on (face > person > cat)" if trk.enabled else "off")
+    print("tracking:", f"on, target {trk.target} (key 'c' in the preview switches me/cat/auto)"
+          if trk.enabled else "off")
 
     black = np.zeros((H, W, 3), np.uint8)
     stats_t = time.time()
+    overlay = True       # preview only: boxes + help line, key 'o' hides/shows them
     try:
         while True:
             t0 = time.time()
             frame = grab.latest()
-            out = black if frame is None else cv2.resize(frame, (W, H))
+            if frame is None:
+                out = black
+            elif a.hide_time:
+                # Older camera install: clock burnt into the top-left corner (~5.6 % of the
+                # height); zoom in slightly (same aspect ratio) to cut it off.
+                fh, fw = frame.shape[:2]
+                top = int(fh * 0.065)
+                side = int(fw * 0.065 / 2)
+                out = cv2.resize(frame[top:, side:fw - side], (W, H))
+            else:
+                out = cv2.resize(frame, (W, H))
             kind, box = trk.kind, trk.box
             if t0 - stats_t >= 10:
                 print(f"video: {grab.count / (t0 - stats_t):.1f} img/s received, "
@@ -456,17 +523,29 @@ def main():
                 cam.send(cv2.cvtColor(out, cv2.COLOR_BGR2RGB))
             if a.preview:
                 view = out.copy()
-                if box and frame is not None and t0 - trk.last_seen < 1:
-                    sx, sy = W / det.w, H / det.h
+                if overlay and box and frame is not None and t0 - trk.last_seen < 1:
+                    ft, fs = (0.065, 0.0325) if a.hide_time else (0.0, 0.0)   # crop above
+                    px = lambda v: int((v / det.w - fs) / (1 - 2 * fs) * W)
+                    py = lambda v: int((v / det.h - ft) / (1 - ft) * H)
                     x, y, bw, bh = box
-                    cv2.rectangle(view, (int(x * sx), int(y * sy)), (int((x + bw) * sx), int((y + bh) * sy)),
-                                  (0, 255, 0), 2)
-                    cv2.putText(view, kind, (int(x * sx), int(y * sy) - 6), cv2.FONT_HERSHEY_SIMPLEX,
+                    cv2.rectangle(view, (px(x), py(y)), (px(x + bw), py(y + bh)), (0, 255, 0), 2)
+                    cv2.putText(view, kind, (px(x), py(y) - 6), cv2.FONT_HERSHEY_SIMPLEX,
                                 0.7, (0, 255, 0), 2)
-                cv2.putText(view, "tracking " + ("ON" if trk.enabled else "off") + "  (t/h/q)", (10, 25),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 200, 255), 2)
+                if overlay:
+                    cv2.putText(view, "tracking " + ("ON" if trk.enabled else "off") + "  target: " + trk.target
+                                + "  (arrows: move, t: on/off, c: target, o: overlay, h: home, q: quit)",
+                                (10, 25), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 200, 255), 2)
                 cv2.imshow("CAMECRACK", view)
-                k = cv2.waitKey(1) & 0xFF
+                kx = cv2.waitKeyEx(1)
+                k = kx & 0xFF if kx != -1 and kx < 0x10000 else -1
+                # Arrow keys (Windows codes): move by hand; tracking is paused so it does not fight back.
+                arrow = {0x250000: (-a.arrow_step, 0), 0x270000: (a.arrow_step, 0),
+                         0x260000: (0, a.arrow_step * 0.6), 0x280000: (0, -a.arrow_step * 0.6)}.get(kx)
+                if arrow:
+                    if trk.enabled:
+                        trk.enabled = False
+                        print("tracking: off (manual move, 't' to resume)")
+                    ptz.rel(*arrow)
                 if k == ord("q"):
                     break
                 if k == ord("t"):
@@ -474,6 +553,12 @@ def main():
                     print("tracking:", trk.enabled)
                 if k == ord("h"):
                     ptz.cmd("home")
+                if k == ord("o"):
+                    overlay = not overlay
+                if k == ord("c"):
+                    t = Detector.TARGETS
+                    trk.target = t[(t.index(trk.target) + 1) % len(t)]
+                    print("target:", trk.target)
             if cam:
                 cam.sleep_until_next_frame()
             else:

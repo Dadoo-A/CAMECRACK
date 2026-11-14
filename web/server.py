@@ -30,7 +30,7 @@ HTTP_PORT = int(os.environ.get("HTTP_PORT", "8787"))
 PTZCTL = os.environ.get("PTZCTL", "auto").strip() or "auto"
 PTZ_CONF = os.environ.get("PTZ_CONF", "auto").strip() or "auto"
 if PTZCTL == "auto":
-    PTZ_PREFIX = ("P=/tmp/ptzctl; C=/etc/config/camecrack/ptz.conf; "
+    PTZ_PREFIX = ("P=/tmp/ptzctl; C=/etc/config/camecrack/ptz.conf; [ -f /tmp/ptz.conf ] && C=/tmp/ptz.conf; "
                   "[ -x $P ] || { P=/tmp/sd/custom/bin/ptzctl; C=/tmp/sd/custom/configs/ptz.conf; }; ")
     PTZCTL, PTZ_CONF = "$P", "$C"
 else:

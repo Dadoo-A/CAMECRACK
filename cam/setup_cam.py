@@ -3,8 +3,10 @@
 
   1. Python packages (requirements.txt)
   2. Detection models (face: YuNet, person/cat: MobileNet-SSD) -> cam/models/
-  3. Virtual webcam driver (Unity Capture, DirectShow) -> %LOCALAPPDATA%\\CAMECRACK\\UnityCapture,
-     registered with regsvr32 (Windows asks for administrator rights once).
+  3. Virtual webcam driver (Unity Capture, DirectShow): downloaded to %LOCALAPPDATA%\\CAMECRACK,
+     copied to %ProgramFiles%\\CAMECRACK\\UnityCapture and registered there with regsvr32
+     (Windows asks for administrator rights once). Program Files because Discord's sandboxed
+     capture process cannot load a DLL from the user profile.
   4. go2rtc.exe (cleans up the camera stream when Docker is not running).
 
 Everything is downloaded from pinned versions and checked with SHA-256.
@@ -22,6 +24,9 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 MODELS = HERE / "models"
 DRIVER_DIR = Path(os.environ.get("LOCALAPPDATA") or Path.home() / "AppData" / "Local") / "CAMECRACK" / "UnityCapture"
+# Registered copy: Program Files, so sandboxed apps (Discord) can load it.
+SYSTEM_DRIVER_DIR = Path(os.environ.get("ProgramFiles", r"C:\Program Files")) / "CAMECRACK" / "UnityCapture"
+DLL_NAMES = ("UnityCaptureFilter64.dll", "UnityCaptureFilter32.dll")
 
 UC = "https://raw.githubusercontent.com/schellingb/UnityCapture/3ed54c325e0ad71afcf4f246c07e5e17b3d7f2d2/Install/"
 ZOO = ("https://media.githubusercontent.com/media/opencv/opencv_zoo/48b10fa505aeb51fbd127fc60a5c660040e823b7/"
@@ -81,16 +86,40 @@ def regsvr32(dll, unregister=False):
 
 
 def driver_registered():
-    """Is "Unity Video Capture" in the 64-bit DirectShow video input devices (what Discord,
-    Teams and browsers use)?"""
+    """Is "Unity Video Capture" registered (64-bit DirectShow, what Discord, Teams and browsers
+    use) from the Program Files copy? An older setup registered it from %LOCALAPPDATA%, which
+    Discord's sandboxed capture process cannot read ("Failed to bind ... 0x8007007E")."""
     import winreg
-    key = r"CLSID\{860BB310-5D01-11d0-BD3B-00A0C911CE86}\Instance\{5C2CD55C-92AD-4999-8666-912BD3E70010}"
+    key = r"CLSID\{5C2CD55C-92AD-4999-8666-912BD3E70010}\InprocServer32"
     try:
-        winreg.CloseKey(winreg.OpenKey(winreg.HKEY_CLASSES_ROOT, key, 0,
-                                       winreg.KEY_READ | winreg.KEY_WOW64_64KEY))
-        return True
+        with winreg.OpenKey(winreg.HKEY_CLASSES_ROOT, key, 0, winreg.KEY_READ | winreg.KEY_WOW64_64KEY) as k:
+            path = winreg.QueryValueEx(k, "")[0]
     except OSError:
         return False
+    return Path(path).parent.resolve() == SYSTEM_DRIVER_DIR.resolve()
+
+
+def install_driver(unregister=False):
+    """One elevated step (UAC prompt): copy both DLLs to Program Files (readable by sandboxed
+    apps such as Discord) and register them there, or unregister them."""
+    import tempfile
+    sysroot = Path(os.environ.get("SystemRoot", r"C:\Windows"))
+    lines = ["$ErrorActionPreference = 'Stop'"]
+    if not unregister:
+        lines.append(f"New-Item -ItemType Directory -Force -Path '{SYSTEM_DRIVER_DIR}' | Out-Null")
+        lines += [f"Copy-Item -Force -Path '{DRIVER_DIR / n}' -Destination '{SYSTEM_DRIVER_DIR / n}'"
+                  for n in DLL_NAMES]
+    for n in DLL_NAMES:
+        reg = sysroot / ("SysWOW64" if n.endswith("32.dll") else "System32") / "regsvr32.exe"
+        lines.append(f"& '{reg}' {'/u ' if unregister else ''}/s '{SYSTEM_DRIVER_DIR / n}' | Out-Null")
+    with tempfile.NamedTemporaryFile("w", suffix=".ps1", delete=False, encoding="utf-8-sig") as f:
+        f.write("\n".join(lines) + "\n")
+    try:
+        ps = (f"Start-Process powershell -Verb RunAs -Wait -ArgumentList "
+              f"'-NoProfile','-ExecutionPolicy','Bypass','-File','\"{f.name}\"'")
+        return subprocess.run(["powershell", "-NoProfile", "-Command", ps]).returncode == 0
+    finally:
+        os.unlink(f.name)
 
 
 def main():
@@ -100,13 +129,13 @@ def main():
     if os.name != "nt":
         sys.exit("The virtual webcam part is Windows-only (Unity Capture driver).")
 
-    dlls = [DRIVER_DIR / "UnityCaptureFilter64.dll", DRIVER_DIR / "UnityCaptureFilter32.dll"]
     if a.uninstall:
-        for d in dlls:
+        print("Unregistering the virtual webcam (Windows will ask for administrator rights) ...")
+        install_driver(unregister=True)
+        for d in (DRIVER_DIR / n for n in DLL_NAMES):   # very first setups registered from here
             if d.exists():
-                print(f"Unregistering {d.name} (Windows will ask for administrator rights) ...")
                 regsvr32(d, unregister=True)
-        print("Done. You can now delete", DRIVER_DIR)
+        print("Done. You can now delete", SYSTEM_DRIVER_DIR, "and", DRIVER_DIR)
         return
 
     print("1/3 Python packages ...")
@@ -134,11 +163,10 @@ def main():
     if driver_registered():
         print("3/3 Virtual webcam already registered")
     else:
-        print("3/3 Registering the virtual webcam 'Unity Video Capture' "
+        print("3/3 Registering the virtual webcam 'Unity Video Capture' from", SYSTEM_DRIVER_DIR,
               "(Windows asks for administrator rights) ...")
-        for d in dlls:
-            if not regsvr32(d):
-                sys.exit(f"ERROR: could not register {d.name}")
+        if not install_driver() or not driver_registered():
+            sys.exit("ERROR: could not register the virtual webcam driver")
 
     import pyvirtualcam  # noqa: E402  (installed in step 1)
     try:

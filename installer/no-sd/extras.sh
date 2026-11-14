@@ -24,6 +24,16 @@ if [ -f "$CC/ptzctl.xz" ] && [ ! -x /tmp/ptzctl ]; then
     log "ptzctl unpack FAILED"; rm -f /tmp/ptzctl
   fi
 fi
+# The toolkit ptz.conf keeps its state and log on the SD card (/tmp/sd/...), which is absent
+# here: use a RAM copy pointing them to /tmp (the flash copy stays identical to the SD one).
+# Relative moves (-J, PC tracking): the motor driver drops a chunk sent before the previous one
+# is done, so the toolkit's 64 steps / 30 ms gives truncated moves. 32 steps / 60 ms measured OK.
+if [ -f "$CC/ptz.conf" ]; then
+  mkdir -p /tmp/ptz_state
+  sed -e 's|^STATE_DIR=.*|STATE_DIR=/tmp/ptz_state|' -e 's|^LOG_FILE=.*|LOG_FILE=/tmp/ptz.log|' \
+      -e 's|^ABSREL_CHUNK_STEPS=.*|ABSREL_CHUNK_STEPS=32|' -e 's|^ABSREL_INTERVAL_MS=.*|ABSREL_INTERVAL_MS=60|' \
+    "$CC/ptz.conf" > /tmp/ptz.conf && log "ptz.conf -> /tmp/ptz.conf (state/log in /tmp, -J 32 steps/60 ms)"
+fi
 
 # Status LED: "connecting" pattern until the Wi-Fi is up (patterns in led.conf, led.sh).
 [ -f "$CC/led.sh" ] && sh "$CC/led.sh" wifi_connecting
